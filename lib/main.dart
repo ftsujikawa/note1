@@ -5,27 +5,13 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'firebase_options.dart';
 import 'dart:async';
 import 'package:flutter/services.dart';
-import 'dart:isolate';
-import 'dart:io' show Platform;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
-  // Isolateの処理を後に移動
-  if (Platform.isAndroid) {
-    RootIsolateToken? rootIsolateToken = RootIsolateToken.instance;
-    if (rootIsolateToken != null) {
-      Isolate.spawn(_isolateMain, rootIsolateToken);
-    }
-  }
-
+  // Isolateの処理を削除
   runApp(const MyApp());
-}
-
-void _isolateMain(RootIsolateToken rootIsolateToken) {
-  BackgroundIsolateBinaryMessenger.ensureInitialized(rootIsolateToken);
-  // バックグラウンド処理をここに記述
 }
 
 class MyApp extends StatelessWidget {
