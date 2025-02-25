@@ -1,0 +1,20 @@
+{
+  "" : {
+    "const-values" : "/Users/tsu/src/note1/macos/build/Pods.build/Release/FirebaseSharedSwift.build/Objects-normal/x86_64/FirebaseSharedSwift-master.swiftconstvalues",
+    "dependencies" : "/Users/tsu/src/note1/macos/build/Pods.build/Release/FirebaseSharedSwift.build/Objects-normal/x86_64/FirebaseSharedSwift-master.d",
+    "diagnostics" : "/Users/tsu/src/note1/macos/build/Pods.build/Release/FirebaseSharedSwift.build/Objects-normal/x86_64/FirebaseSharedSwift-master.dia",
+    "emit-module-dependencies" : "/Users/tsu/src/note1/macos/build/Pods.build/Release/FirebaseSharedSwift.build/Objects-normal/x86_64/FirebaseSharedSwift-master-emit-module.d",
+    "emit-module-diagnostics" : "/Users/tsu/src/note1/macos/build/Pods.build/Release/FirebaseSharedSwift.build/Objects-normal/x86_64/FirebaseSharedSwift-master-emit-module.dia",
+    "swift-dependencies" : "/Users/tsu/src/note1/macos/build/Pods.build/Release/FirebaseSharedSwift.build/Objects-normal/x86_64/FirebaseSharedSwift-master.swiftdeps"
+  },
+  "/Users/tsu/src/note1/macos/Pods/FirebaseSharedSwift/FirebaseSharedSwift/Sources/FirebaseRemoteConfigValueDecoding.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release/FirebaseSharedSwift.build/Objects-normal/x86_64/FirebaseRemoteConfigValueDecoding.o",
+    "llvm-bc" : "/Users/tsu/src/note1/macos/build/Pods.build/Release/FirebaseSharedSwift.build/Objects-normal/x86_64/FirebaseRemoteConfigValueDecoding.bc",
+    "object" : "/Users/tsu/src/note1/macos/build/Pods.build/Release/FirebaseSharedSwift.build/Objects-normal/x86_64/FirebaseRemoteConfigValueDecoding.o"
+  },
+  "/Users/tsu/src/note1/macos/Pods/FirebaseSharedSwift/FirebaseSharedSwift/Sources/third_party/FirebaseDataEncoder/FirebaseDataEncoder.swift" : {
+    "index-unit-output-path" : "/Pods.build/Release/FirebaseSharedSwift.build/Objects-normal/x86_64/FirebaseDataEncoder.o",
+    "llvm-bc" : "/Users/tsu/src/note1/macos/build/Pods.build/Release/FirebaseSharedSwift.build/Objects-normal/x86_64/FirebaseDataEncoder.bc",
+    "object" : "/Users/tsu/src/note1/macos/build/Pods.build/Release/FirebaseSharedSwift.build/Objects-normal/x86_64/FirebaseDataEncoder.o"
+  }
+}
