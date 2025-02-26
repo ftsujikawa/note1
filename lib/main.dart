@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'firebase_options.dart';
 import 'dart:async';
+import 'package:google_sign_in/google_sign_in.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -101,6 +102,40 @@ class _LoginPageState extends State<LoginPage> {
     }
   }
 
+  Future<void> _signInWithGoogle() async {
+    if (_isLoading) return;
+    setState(() => _isLoading = true);
+
+    try {
+      // Googleサインインフローを開始
+      final GoogleSignInAccount? googleUser = await GoogleSignIn().signIn();
+      if (googleUser == null) return;
+
+      // 認証情報を取得
+      final GoogleSignInAuthentication googleAuth =
+          await googleUser.authentication;
+
+      // Firebaseクレデンシャルを作成
+      final credential = GoogleAuthProvider.credential(
+        accessToken: googleAuth.accessToken,
+        idToken: googleAuth.idToken,
+      );
+
+      // Firebase Authでサインイン
+      await FirebaseAuth.instance.signInWithCredential(credential);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Googleログインエラー: ${e.toString()}')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -140,6 +175,11 @@ class _LoginPageState extends State<LoginPage> {
                   child: const Text('新規登録'),
                 ),
               ],
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton.icon(
+              onPressed: _isLoading ? null : _signInWithGoogle,
+              label: const Text('Googleでログイン'),
             ),
             if (_isLoading)
               const Padding(
