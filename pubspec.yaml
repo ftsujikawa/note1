@@ -39,6 +39,12 @@ dependencies:
   firebase_auth: ^5.5.0
   shared_preferences: ^2.5.2
   google_sign_in: ^6.2.2
+  url_launcher: ^6.3.1
+  flutter_signin_button: ^2.0.0
+  google_sign_in_all_platforms: ^1.1.0
+  google_sign_in_all_platforms_desktop: ^0.0.2
+  google_sign_in_dartio: ^0.3.0
+  shelf: ^1.4.2
 
 dev_dependencies:
   flutter_test:

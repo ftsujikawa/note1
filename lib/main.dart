@@ -5,10 +5,24 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'firebase_options.dart';
 import 'dart:async';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'dart:io';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 
+bool shouldUseFirebaseEmulator = false;
+late final FirebaseAuth auth;
+late final FirebaseApp app;
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  app = await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
+  auth = FirebaseAuth.instance;
+
+  if (shouldUseFirebaseEmulator) {
+    await auth.useAuthEmulator('localhost', 9099);
+  }
 
   runApp(const MyApp());
 }
@@ -50,6 +64,7 @@ class _LoginPageState extends State<LoginPage> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _isLoading = false;
+  String? _userPhotoUrl;
 
   @override
   void dispose() {
@@ -107,26 +122,120 @@ class _LoginPageState extends State<LoginPage> {
     setState(() => _isLoading = true);
 
     try {
-      // Googleサインインフローを開始
-      final GoogleSignInAccount? googleUser = await GoogleSignIn().signIn();
-      if (googleUser == null) return;
+      if (Platform.isWindows) {
+        // Windows用のGoogle認証フロー
+        const clientId =
+            '816464201732-29ln6fesquaug5pifejbia8pmm32tsr5.apps.googleusercontent.com';
+        final redirectUri = 'http://localhost:54321'; // リダイレクトURIを修正
 
-      // 認証情報を取得
-      final GoogleSignInAuthentication googleAuth =
-          await googleUser.authentication;
+        // 認証URLを生成
+        final authUrl = Uri.parse(
+          'https://accounts.google.com/o/oauth2/v2/auth?'
+          'client_id=$clientId'
+          '&redirect_uri=$redirectUri'
+          '&response_type=code'
+          '&scope=email%20profile%20openid'
+          '&access_type=offline'
+          '&prompt=consent'
+          '&state=${DateTime.now().millisecondsSinceEpoch}',
+        );
 
-      // Firebaseクレデンシャルを作成
-      final credential = GoogleAuthProvider.credential(
-        accessToken: googleAuth.accessToken,
-        idToken: googleAuth.idToken,
-      );
+        print('認証URL: $authUrl'); // デバッグ情報を追加
 
-      // Firebase Authでサインイン
-      await FirebaseAuth.instance.signInWithCredential(credential);
+        // ブラウザで認証URLを開く
+        if (await canLaunchUrl(authUrl)) {
+          await launchUrl(authUrl, mode: LaunchMode.externalApplication);
+
+          // ローカルサーバーを起動してコードを待ち受ける
+          final server = await HttpServer.bind('localhost', 54321);
+          String? code;
+
+          await for (HttpRequest request in server) {
+            code = request.uri.queryParameters['code'];
+
+            request.response
+              ..headers.contentType = ContentType.html
+              ..write(
+                '<html><body><h1>認証が完了しました。このページを閉じてアプリケーションに戻ってください。</h1></body></html>',
+              )
+              ..close();
+
+            await server.close();
+            break;
+          }
+
+          if (code != null) {
+            print('認証コード: $code'); // デバッグ情報
+            // コードをトークンに交換
+            final tokenResponse = await http.post(
+              Uri.parse('https://oauth2.googleapis.com/token'),
+              headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+              body: {
+                'client_id': clientId,
+                'client_secret':
+                    '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', // クライアントシークレットを追加
+                'redirect_uri': redirectUri,
+                'grant_type': 'authorization_code',
+                'code': code,
+              },
+            );
+
+            //print('トークンレスポンス: ${tokenResponse.body}'); // デバッグ情報
+
+            if (tokenResponse.statusCode == 200) {
+              final tokenData = json.decode(tokenResponse.body);
+              final idToken = tokenData['id_token'];
+              final accessToken = tokenData['access_token'];
+
+              // Firebaseで認証
+              final credential = GoogleAuthProvider.credential(
+                accessToken: accessToken,
+                idToken: idToken,
+              );
+
+              final userCredential = await auth.signInWithCredential(
+                credential,
+              );
+              final user = userCredential.user;
+
+              if (user != null && mounted) {
+                setState(() {
+                  _userPhotoUrl = user.photoURL;
+                });
+              }
+            } else {
+              throw Exception('トークンの取得に失敗しました');
+            }
+          }
+        } else {
+          throw Exception('認証URLを開けませんでした');
+        }
+      } else {
+        // 通常のGoogleサインインフロー
+        final GoogleSignInAccount? googleUser = await GoogleSignIn().signIn();
+        if (googleUser == null) return;
+
+        setState(() {
+          _userPhotoUrl = googleUser.photoUrl;
+        });
+
+        final GoogleSignInAuthentication googleAuth =
+            await googleUser.authentication;
+        final credential = GoogleAuthProvider.credential(
+          accessToken: googleAuth.accessToken,
+          idToken: googleAuth.idToken,
+        );
+
+        await FirebaseAuth.instance.signInWithCredential(credential);
+      }
     } catch (e) {
       if (mounted) {
+        //print('詳細なエラー情報: $e');
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Googleログインエラー: ${e.toString()}')),
+          SnackBar(
+            content: Text('Googleログインエラー: ${e.toString()}'),
+            duration: const Duration(seconds: 10),
+          ),
         );
       }
     } finally {
@@ -145,6 +254,14 @@ class _LoginPageState extends State<LoginPage> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
+            if (_userPhotoUrl != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 16.0),
+                child: CircleAvatar(
+                  radius: 40,
+                  backgroundImage: NetworkImage(_userPhotoUrl!),
+                ),
+              ),
             TextField(
               controller: _emailController,
               decoration: const InputDecoration(
@@ -179,7 +296,24 @@ class _LoginPageState extends State<LoginPage> {
             const SizedBox(height: 16),
             ElevatedButton.icon(
               onPressed: _isLoading ? null : _signInWithGoogle,
+              icon: Image.network(
+                'https://developers.google.com/identity/images/g-logo.png',
+                height: 24.0,
+              ),
               label: const Text('Googleでログイン'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.white,
+                foregroundColor: Colors.black87,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 12,
+                ),
+                elevation: 1,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(4),
+                  side: const BorderSide(color: Colors.grey, width: 1),
+                ),
+              ),
             ),
             if (_isLoading)
               const Padding(
@@ -196,6 +330,96 @@ class _LoginPageState extends State<LoginPage> {
 class DocumentListPage extends StatelessWidget {
   const DocumentListPage({super.key});
 
+  Future<void> _reauthenticateWithGoogle(BuildContext context) async {
+    try {
+      if (Platform.isWindows) {
+        throw Exception('Windows版では再認証は利用できません');
+      }
+
+      final GoogleSignInAccount? googleUser = await GoogleSignIn().signIn();
+      if (googleUser == null) return;
+
+      final GoogleSignInAuthentication googleAuth =
+          await googleUser.authentication;
+      final credential = GoogleAuthProvider.credential(
+        accessToken: googleAuth.accessToken,
+        idToken: googleAuth.idToken,
+      );
+
+      await FirebaseAuth.instance.currentUser!.reauthenticateWithCredential(
+        credential,
+      );
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('再認証エラー: ${e.toString()}')));
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> _deleteAccount(BuildContext context) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: const Text('アカウント削除の確認'),
+            content: const Text('本当にアカウントを削除しますか？\nこの操作は取り消せません。'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('キャンセル'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                style: TextButton.styleFrom(foregroundColor: Colors.red),
+                child: const Text('削除'),
+              ),
+            ],
+          ),
+    );
+
+    if (result != true || !context.mounted) return;
+
+    try {
+      final user = FirebaseAuth.instance.currentUser!;
+
+      // Googleアカウントの場合は再認証が必要
+      if (user.providerData.any(
+        (provider) => provider.providerId == 'google.com',
+      )) {
+        await _reauthenticateWithGoogle(context);
+      }
+
+      // ユーザーのドキュメントを全て削除
+      final docs =
+          await FirebaseFirestore.instance
+              .collection('documents')
+              .where('userId', isEqualTo: user.uid)
+              .get();
+
+      for (var doc in docs.docs) {
+        await doc.reference.delete();
+      }
+
+      // ユーザーアカウントを削除
+      await user.delete();
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('アカウントを削除しました')));
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('エラー: ${e.toString()}')));
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = FirebaseAuth.instance.currentUser!;
@@ -204,9 +428,40 @@ class DocumentListPage extends StatelessWidget {
       appBar: AppBar(
         title: const Text('ドキュメント一覧'),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: () => FirebaseAuth.instance.signOut(),
+          PopupMenuButton<String>(
+            onSelected: (value) {
+              switch (value) {
+                case 'logout':
+                  FirebaseAuth.instance.signOut();
+                  break;
+                case 'delete_account':
+                  _deleteAccount(context);
+                  break;
+              }
+            },
+            itemBuilder:
+                (context) => [
+                  const PopupMenuItem(
+                    value: 'logout',
+                    child: Row(
+                      children: [
+                        Icon(Icons.logout),
+                        SizedBox(width: 8),
+                        Text('ログアウト'),
+                      ],
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: 'delete_account',
+                    child: Row(
+                      children: [
+                        Icon(Icons.delete_forever, color: Colors.red),
+                        SizedBox(width: 8),
+                        Text('アカウント削除', style: TextStyle(color: Colors.red)),
+                      ],
+                    ),
+                  ),
+                ],
           ),
         ],
       ),
@@ -297,6 +552,7 @@ class _EditorPageState extends State<EditorPage> {
   bool _isBold = false;
   bool _isItalic = false;
   double _fontSize = 16.0;
+  TextAlign _textAlign = TextAlign.left;
   Timer? _saveTimer;
 
   @override
@@ -328,7 +584,32 @@ class _EditorPageState extends State<EditorPage> {
         _isBold = data['styles']?['isBold'] ?? false;
         _isItalic = data['styles']?['isItalic'] ?? false;
         _fontSize = (data['styles']?['fontSize'] ?? 16.0).toDouble();
+        _textAlign = _getTextAlignFromString(
+          data['styles']?['textAlign'] ?? 'left',
+        );
       });
+    }
+  }
+
+  TextAlign _getTextAlignFromString(String align) {
+    switch (align) {
+      case 'center':
+        return TextAlign.center;
+      case 'right':
+        return TextAlign.right;
+      default:
+        return TextAlign.left;
+    }
+  }
+
+  String _getStringFromTextAlign(TextAlign align) {
+    switch (align) {
+      case TextAlign.center:
+        return 'center';
+      case TextAlign.right:
+        return 'right';
+      default:
+        return 'left';
     }
   }
 
@@ -346,6 +627,7 @@ class _EditorPageState extends State<EditorPage> {
               'isBold': _isBold,
               'isItalic': _isItalic,
               'fontSize': _fontSize,
+              'textAlign': _getStringFromTextAlign(_textAlign),
             },
           });
     });
@@ -396,6 +678,53 @@ class _EditorPageState extends State<EditorPage> {
                     });
                   },
                 ),
+                const VerticalDivider(),
+                IconButton(
+                  icon: Icon(
+                    Icons.format_align_left,
+                    color:
+                        _textAlign == TextAlign.left
+                            ? Colors.blue
+                            : Colors.grey,
+                  ),
+                  onPressed: () {
+                    setState(() {
+                      _textAlign = TextAlign.left;
+                      _saveDocument();
+                    });
+                  },
+                ),
+                IconButton(
+                  icon: Icon(
+                    Icons.format_align_center,
+                    color:
+                        _textAlign == TextAlign.center
+                            ? Colors.blue
+                            : Colors.grey,
+                  ),
+                  onPressed: () {
+                    setState(() {
+                      _textAlign = TextAlign.center;
+                      _saveDocument();
+                    });
+                  },
+                ),
+                IconButton(
+                  icon: Icon(
+                    Icons.format_align_right,
+                    color:
+                        _textAlign == TextAlign.right
+                            ? Colors.blue
+                            : Colors.grey,
+                  ),
+                  onPressed: () {
+                    setState(() {
+                      _textAlign = TextAlign.right;
+                      _saveDocument();
+                    });
+                  },
+                ),
+                const VerticalDivider(),
                 IconButton(
                   icon: const Icon(Icons.text_decrease),
                   onPressed: () {
@@ -429,6 +758,7 @@ class _EditorPageState extends State<EditorPage> {
                   fontWeight: _isBold ? FontWeight.bold : FontWeight.normal,
                   fontStyle: _isItalic ? FontStyle.italic : FontStyle.normal,
                 ),
+                textAlign: _textAlign,
                 decoration: const InputDecoration(
                   border: InputBorder.none,
                   hintText: 'ここに文章を入力してください',
