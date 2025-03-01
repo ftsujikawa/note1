@@ -9,6 +9,8 @@ import 'dart:io';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'package:image_picker/image_picker.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 
 bool shouldUseFirebaseEmulator = false;
 late final FirebaseAuth auth;
@@ -554,6 +556,8 @@ class _EditorPageState extends State<EditorPage> {
   double _fontSize = 16.0;
   TextAlign _textAlign = TextAlign.left;
   Timer? _saveTimer;
+  List<String> _images = [];
+  final ImagePicker _picker = ImagePicker();
 
   @override
   void initState() {
@@ -587,6 +591,7 @@ class _EditorPageState extends State<EditorPage> {
         _textAlign = _getTextAlignFromString(
           data['styles']?['textAlign'] ?? 'left',
         );
+        _images = List<String>.from(data['images'] ?? []);
       });
     }
   }
@@ -613,6 +618,123 @@ class _EditorPageState extends State<EditorPage> {
     }
   }
 
+  Future<void> _addImage() async {
+    try {
+      final XFile? image = await _picker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 1024, // 画像サイズを制限
+        maxHeight: 1024,
+        imageQuality: 85, // 品質を調整
+      );
+      if (image == null) return;
+
+      final userId = FirebaseAuth.instance.currentUser!.uid;
+      final bytes = await image.readAsBytes();
+
+      if (bytes.isEmpty) {
+        throw Exception('画像データが空です');
+      }
+
+      // ファイル名を一意にする
+      final ext = image.name.split('.').last;
+      final fileName = '${DateTime.now().millisecondsSinceEpoch}.$ext';
+      final path = 'users/$userId/documents/${widget.documentId}/$fileName';
+
+      final storageRef = FirebaseStorage.instance.ref().child(path);
+
+      // アップロードタスクの作成と監視
+      final uploadTask = storageRef.putData(
+        bytes,
+        SettableMetadata(
+          contentType: 'image/${ext == 'jpg' ? 'jpeg' : ext}',
+          customMetadata: {
+            'uploadedBy': userId,
+            'documentId': widget.documentId,
+          },
+        ),
+      );
+
+      // アップロードの進行状況を監視
+      uploadTask.snapshotEvents.listen((TaskSnapshot snapshot) {
+        if (mounted) {
+          final progress =
+              (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+          print('アップロード進行状況: ${progress.toStringAsFixed(1)}%');
+        }
+      });
+
+      // アップロード完了を待機
+      await uploadTask;
+
+      if (uploadTask.snapshot.state == TaskState.success) {
+        // URLを取得
+        final imageUrl = await storageRef.getDownloadURL();
+
+        // Firestoreに保存
+        setState(() {
+          _images.add(imageUrl);
+        });
+        await FirebaseFirestore.instance
+            .collection('documents')
+            .doc(widget.documentId)
+            .update({
+              'images': _images,
+              'lastModified': FieldValue.serverTimestamp(),
+            });
+
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('画像をアップロードしました')));
+        }
+      } else {
+        throw Exception('アップロードに失敗しました');
+      }
+    } catch (e) {
+      print('エラーの詳細: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('画像のアップロードに失敗しました: ${e.toString()}'),
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _deleteImage(int index) async {
+    try {
+      final imageUrl = _images[index];
+      final userId = FirebaseAuth.instance.currentUser!.uid;
+
+      // まずFirestoreから画像URLを削除
+      setState(() {
+        _images.removeAt(index);
+      });
+      await FirebaseFirestore.instance
+          .collection('documents')
+          .doc(widget.documentId)
+          .update({'images': _images});
+
+      // Storage上のファイルを削除
+      try {
+        final ref = FirebaseStorage.instance.refFromURL(imageUrl);
+        if (ref.fullPath.startsWith('users/$userId/')) {
+          await ref.delete();
+        }
+      } catch (storageError) {
+        print('ストレージからの削除に失敗しました: $storageError');
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('画像の削除に失敗しました: ${e.toString()}')),
+        );
+      }
+    }
+  }
+
   void _saveDocument() {
     _saveTimer?.cancel();
     _saveTimer = Timer(const Duration(seconds: 1), () {
@@ -629,6 +751,7 @@ class _EditorPageState extends State<EditorPage> {
               'fontSize': _fontSize,
               'textAlign': _getStringFromTextAlign(_textAlign),
             },
+            'images': _images,
           });
     });
   }
@@ -647,6 +770,9 @@ class _EditorPageState extends State<EditorPage> {
           ),
           onChanged: (_) => _saveDocument(),
         ),
+        actions: [
+          IconButton(icon: const Icon(Icons.image), onPressed: _addImage),
+        ],
       ),
       body: Column(
         children: [
@@ -746,6 +872,58 @@ class _EditorPageState extends State<EditorPage> {
               ],
             ),
           ),
+          if (_images.isNotEmpty)
+            SizedBox(
+              height: 120,
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                itemCount: _images.length,
+                itemBuilder: (context, index) {
+                  return Padding(
+                    padding: const EdgeInsets.all(8.0),
+                    child: Stack(
+                      children: [
+                        Container(
+                          constraints: const BoxConstraints(
+                            maxWidth: 160,
+                            maxHeight: 120,
+                          ),
+                          child: Image.network(
+                            _images[index],
+                            fit: BoxFit.contain,
+                            errorBuilder: (context, error, stackTrace) {
+                              return Container(
+                                height: 100,
+                                width: 100,
+                                color: Colors.grey[300],
+                                child: const Icon(Icons.error),
+                              );
+                            },
+                          ),
+                        ),
+                        Positioned(
+                          right: 0,
+                          top: 0,
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: Colors.black.withOpacity(0.5),
+                              shape: BoxShape.circle,
+                            ),
+                            child: IconButton(
+                              icon: const Icon(
+                                Icons.close,
+                                color: Colors.white,
+                              ),
+                              onPressed: () => _deleteImage(index),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
           Expanded(
             child: Padding(
               padding: const EdgeInsets.all(16.0),
