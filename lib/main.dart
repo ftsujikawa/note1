@@ -557,7 +557,13 @@ class _EditorPageState extends State<EditorPage> {
   TextAlign _textAlign = TextAlign.left;
   Timer? _saveTimer;
   List<String> _images = [];
+  Map<int, Size> _imageSizes = {};
   final ImagePicker _picker = ImagePicker();
+
+  // 画像サイズの定数
+  static const Size _smallSize = Size(200, 150);
+  static const Size _mediumSize = Size(300, 200);
+  static const Size _largeSize = Size(400, 300);
 
   @override
   void initState() {
@@ -592,6 +598,18 @@ class _EditorPageState extends State<EditorPage> {
           data['styles']?['textAlign'] ?? 'left',
         );
         _images = List<String>.from(data['images'] ?? []);
+
+        // 画像サイズの初期化
+        final imageSizes = data['imageSizes'] as Map<String, dynamic>?;
+        if (imageSizes != null) {
+          _imageSizes = imageSizes.map((key, value) {
+            final size = value as Map<String, dynamic>;
+            return MapEntry(
+              int.parse(key),
+              Size(size['width'].toDouble(), size['height'].toDouble()),
+            );
+          });
+        }
       });
     }
   }
@@ -735,6 +753,112 @@ class _EditorPageState extends State<EditorPage> {
     }
   }
 
+  Future<void> _showResizeDialog(BuildContext context, int index) async {
+    Size currentSize = _imageSizes[index] ?? _mediumSize;
+
+    await showDialog(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: const Text('画像サイズの変更'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  title: const Text('小'),
+                  subtitle: const Text('200 x 150'),
+                  leading: Radio<Size>(
+                    value: _smallSize,
+                    groupValue: currentSize,
+                    onChanged: (Size? value) {
+                      currentSize = value!;
+                      (context as Element).markNeedsBuild();
+                    },
+                  ),
+                ),
+                ListTile(
+                  title: const Text('中'),
+                  subtitle: const Text('300 x 200'),
+                  leading: Radio<Size>(
+                    value: _mediumSize,
+                    groupValue: currentSize,
+                    onChanged: (Size? value) {
+                      currentSize = value!;
+                      (context as Element).markNeedsBuild();
+                    },
+                  ),
+                ),
+                ListTile(
+                  title: const Text('大'),
+                  subtitle: const Text('400 x 300'),
+                  leading: Radio<Size>(
+                    value: _largeSize,
+                    groupValue: currentSize,
+                    onChanged: (Size? value) {
+                      currentSize = value!;
+                      (context as Element).markNeedsBuild();
+                    },
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('キャンセル'),
+              ),
+              TextButton(
+                onPressed: () {
+                  _resizeImage(index, currentSize.width, currentSize.height);
+                  Navigator.pop(context);
+                },
+                child: const Text('変更'),
+              ),
+            ],
+          ),
+    );
+  }
+
+  Future<void> _resizeImage(int index, double width, double height) async {
+    try {
+      setState(() {
+        _imageSizes[index] = Size(width, height);
+      });
+
+      // Firestoreに保存
+      final imageSizesMap = _imageSizes.map(
+        (key, value) => MapEntry(key.toString(), {
+          'width': value.width,
+          'height': value.height,
+        }),
+      );
+
+      await FirebaseFirestore.instance
+          .collection('documents')
+          .doc(widget.documentId)
+          .update({
+            'imageSizes': imageSizesMap,
+            'lastModified': FieldValue.serverTimestamp(),
+          });
+
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('画像サイズを変更しました')));
+      }
+    } catch (e) {
+      print('画像のリサイズエラー: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('画像サイズの変更に失敗しました: ${e.toString()}'),
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
+    }
+  }
+
   void _saveDocument() {
     _saveTimer?.cancel();
     _saveTimer = Timer(const Duration(seconds: 1), () {
@@ -873,56 +997,80 @@ class _EditorPageState extends State<EditorPage> {
             ),
           ),
           if (_images.isNotEmpty)
-            SizedBox(
-              height: 120,
-              child: ListView.builder(
-                scrollDirection: Axis.horizontal,
-                itemCount: _images.length,
-                itemBuilder: (context, index) {
-                  return Padding(
-                    padding: const EdgeInsets.all(8.0),
-                    child: Stack(
-                      children: [
-                        Container(
-                          constraints: const BoxConstraints(
-                            maxWidth: 160,
-                            maxHeight: 120,
-                          ),
-                          child: Image.network(
-                            _images[index],
-                            fit: BoxFit.contain,
-                            errorBuilder: (context, error, stackTrace) {
-                              return Container(
-                                height: 100,
-                                width: 100,
-                                color: Colors.grey[300],
-                                child: const Icon(Icons.error),
-                              );
-                            },
-                          ),
-                        ),
-                        Positioned(
-                          right: 0,
-                          top: 0,
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: Colors.black.withOpacity(0.5),
-                              shape: BoxShape.circle,
-                            ),
-                            child: IconButton(
-                              icon: const Icon(
-                                Icons.close,
-                                color: Colors.white,
+            LayoutBuilder(
+              builder: (context, constraints) {
+                double maxHeight = 0;
+                for (int i = 0; i < _images.length; i++) {
+                  final size = _imageSizes[i] ?? const Size(300, 200);
+                  maxHeight = maxHeight > size.height ? maxHeight : size.height;
+                }
+                return SizedBox(
+                  height: maxHeight + 16, // パディングの分を追加
+                  child: ListView.builder(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: _images.length,
+                    itemBuilder: (context, index) {
+                      final size = _imageSizes[index] ?? const Size(300, 200);
+                      return Padding(
+                        padding: const EdgeInsets.all(8.0),
+                        child: Stack(
+                          children: [
+                            Container(
+                              width: size.width,
+                              height: size.height,
+                              constraints: BoxConstraints(
+                                minWidth: size.width,
+                                minHeight: size.height,
+                                maxWidth: size.width,
+                                maxHeight: size.height,
                               ),
-                              onPressed: () => _deleteImage(index),
+                              decoration: BoxDecoration(
+                                border: Border.all(color: Colors.grey[300]!),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              clipBehavior: Clip.antiAlias,
+                              child: GestureDetector(
+                                onTap: () => _showResizeDialog(context, index),
+                                child: Image.network(
+                                  _images[index],
+                                  width: size.width,
+                                  height: size.height,
+                                  fit: BoxFit.contain,
+                                  errorBuilder: (context, error, stackTrace) {
+                                    return Container(
+                                      height: 100,
+                                      width: 100,
+                                      color: Colors.grey[300],
+                                      child: const Icon(Icons.error),
+                                    );
+                                  },
+                                ),
+                              ),
                             ),
-                          ),
+                            Positioned(
+                              right: 0,
+                              top: 0,
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withOpacity(0.5),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: IconButton(
+                                  icon: const Icon(
+                                    Icons.close,
+                                    color: Colors.white,
+                                  ),
+                                  onPressed: () => _deleteImage(index),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
-                  );
-                },
-              ),
+                      );
+                    },
+                  ),
+                );
+              },
             ),
           Expanded(
             child: Padding(
