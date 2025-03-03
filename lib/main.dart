@@ -11,12 +11,18 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:image_picker/image_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:google_mobile_ads/google_mobile_ads.dart';
 
 bool shouldUseFirebaseEmulator = false;
 late final FirebaseAuth auth;
 late final FirebaseApp app;
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  if (Platform.isAndroid || Platform.isIOS) {
+    await MobileAds.instance.initialize(); // AdMobの初期化（AndroidとiOSのみ）
+  }
+
   app = await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
@@ -329,8 +335,56 @@ class _LoginPageState extends State<LoginPage> {
   }
 }
 
-class DocumentListPage extends StatelessWidget {
+class DocumentListPage extends StatefulWidget {
   const DocumentListPage({super.key});
+
+  @override
+  State<DocumentListPage> createState() => _DocumentListPageState();
+}
+
+class _DocumentListPageState extends State<DocumentListPage> {
+  BannerAd? _bannerAd;
+  bool _isAdLoaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAd();
+  }
+
+  void _loadAd() {
+    if (!Platform.isAndroid && !Platform.isIOS) return;
+
+    _bannerAd = BannerAd(
+      adUnitId:
+          Platform.isAndroid
+              ? 'ca-app-pub-3940256099942544/6300978111' // Androidのテスト用バナー広告ID
+              : 'ca-app-pub-3940256099942544/2934735716', // iOSのテスト用バナー広告ID
+      size: AdSize.banner,
+      request: const AdRequest(),
+      listener: BannerAdListener(
+        onAdLoaded: (ad) {
+          setState(() {
+            _isAdLoaded = true;
+          });
+        },
+        onAdFailedToLoad: (ad, error) {
+          ad.dispose();
+          _bannerAd = null;
+          _isAdLoaded = false;
+          print('バナー広告の読み込みに失敗しました: $error');
+        },
+      ),
+    );
+
+    _bannerAd?.load();
+  }
+
+  @override
+  void dispose() {
+    _bannerAd?.dispose();
+    super.dispose();
+  }
 
   Future<void> _reauthenticateWithGoogle(BuildContext context) async {
     try {
@@ -467,47 +521,61 @@ class DocumentListPage extends StatelessWidget {
           ),
         ],
       ),
-      body: StreamBuilder<QuerySnapshot>(
-        stream:
-            FirebaseFirestore.instance
-                .collection('documents')
-                .where('userId', isEqualTo: user.uid)
-                .orderBy('lastModified', descending: true)
-                .snapshots(),
-        builder: (context, snapshot) {
-          if (snapshot.hasError) {
-            return const Center(child: Text('エラーが発生しました'));
-          }
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
+      body: Column(
+        children: [
+          Expanded(
+            child: StreamBuilder<QuerySnapshot>(
+              stream:
+                  FirebaseFirestore.instance
+                      .collection('documents')
+                      .where('userId', isEqualTo: user.uid)
+                      .orderBy('lastModified', descending: true)
+                      .snapshots(),
+              builder: (context, snapshot) {
+                if (snapshot.hasError) {
+                  return const Center(child: Text('エラーが発生しました'));
+                }
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
 
-          return ListView(
-            children:
-                snapshot.data!.docs.map((doc) {
-                  Map<String, dynamic> data =
-                      doc.data() as Map<String, dynamic>;
-                  return ListTile(
-                    title: Text(data['title'] ?? '無題'),
-                    subtitle: Text(
-                      '最終更新: ${data['lastModified']?.toDate().toString().split('.')[0] ?? ''}',
-                    ),
-                    onTap:
-                        () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder:
-                                (context) => EditorPage(documentId: doc.id),
+                return ListView(
+                  children:
+                      snapshot.data!.docs.map((doc) {
+                        Map<String, dynamic> data =
+                            doc.data() as Map<String, dynamic>;
+                        return ListTile(
+                          title: Text(data['title'] ?? '無題'),
+                          subtitle: Text(
+                            '最終更新: ${data['lastModified']?.toDate().toString().split('.')[0] ?? ''}',
                           ),
-                        ),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.delete),
-                      onPressed: () => doc.reference.delete(),
-                    ),
-                  );
-                }).toList(),
-          );
-        },
+                          onTap:
+                              () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder:
+                                      (context) =>
+                                          EditorPage(documentId: doc.id),
+                                ),
+                              ),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.delete),
+                            onPressed: () => doc.reference.delete(),
+                          ),
+                        );
+                      }).toList(),
+                );
+              },
+            ),
+          ),
+          if (_isAdLoaded)
+            Container(
+              alignment: Alignment.center,
+              width: _bannerAd?.size.width.toDouble(),
+              height: _bannerAd?.size.height.toDouble(),
+              child: AdWidget(ad: _bannerAd!),
+            ),
+        ],
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: () => _createNewDocument(context),
